@@ -135,7 +135,14 @@ async def play_hndlr(
         )
 
     if await db.is_logger():
-        await utils.play_log(m, sent.link, file.title, file.duration)
+        await utils.play_log(
+            m,
+            sent.link,
+            file.title,
+            file.duration,
+            video=bool(video),
+            requester=m.from_user,
+        )
 
     file.user = mention
 

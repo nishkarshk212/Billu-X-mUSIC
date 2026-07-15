@@ -16,7 +16,8 @@ from pytgcalls.pytgcalls_session import PyTgCallsSession
 
 from ishu import (app, config, db, lang, logger,
                    queue, thumb, userbot, yt)
-from ishu.helpers import Media, Track, buttons
+from ishu.core.youtube import YouTube, set_dl_context
+from ishu.helpers import Media, Track, buttons, utils
 
 
 def _cleanup_file(media) -> None:
@@ -147,11 +148,26 @@ class TgCall(PyTgCalls):
 
         # ── Step 3: Fallback — download then play ─────────────────────────────
         if not stream_success and isinstance(media, Track):
+            set_dl_context(
+                chat_id=chat_id,
+                chat_title=getattr(message.chat, "title", None),
+                title=media.title,
+                video=media.video,
+            )
             media.file_path = await yt.download(media.id, video=media.video)
             media_path = media.file_path
 
         if not media_path:
             await message.edit_text(_lang["error_no_file"].format(config.SUPPORT_CHAT))
+            if isinstance(media, Track):
+                await utils.error_log(
+                    context="Stream URL + Download both failed",
+                    error="No media source could be resolved (all download methods returned None).",
+                    chat_id=chat_id,
+                    chat_title=getattr(message.chat, "title", None),
+                    title=media.title,
+                    video=media.video,
+                )
             return await self.play_next(chat_id)
 
         try:

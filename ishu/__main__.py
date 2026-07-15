@@ -31,6 +31,9 @@ async def idle():
 
 async def main():
     await db.connect()
+    # Load persisted logger-group setting (db.logger defaults to ON when LOGGER_ID
+    # is configured; get_logger() overrides it if an explicit setting was saved).
+    await db.get_logger()
 
     await app.boot()
     await userbot.boot()

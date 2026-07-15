@@ -4,10 +4,11 @@
 
 
 import re
+from datetime import datetime, timezone
 
 from pyrogram import enums, types
 
-from ishu import app
+from ishu import app, logger
 
 
 class Utilities:
@@ -91,22 +92,74 @@ class Utilities:
         link: str,
         title: str,
         duration: str,
+        video: bool = False,
+        requester: "types.User | None" = None,
     ) -> None:
-        if m.chat.id == app.logger:
+        if not app.logger or m.chat.id == app.logger:
             return
-        _text = m.lang["play_log"].format(
-            app.name,
-            m.chat.id,
-            m.chat.title,
-            m.from_user.id,
-            m.from_user.mention,
-            link,
-            title,
-            duration,
+
+        user = requester or m.from_user
+        chat_username = f"@{m.chat.username}" if getattr(m.chat, "username", None) else "Private / None"
+        ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+
+        _text = (
+            f"<b>🎵 {app.name} — Play Log</b>\n"
+            f"<blockquote expandable>"
+            f"<b>When:</b> {ts}\n"
+            f"<b>Group:</b> <code>{m.chat.id}</code> | {m.chat.title}\n"
+            f"<b>Group Username:</b> {chat_username}\n"
+            f"<b>Requested by:</b> {user.mention}\n"
+            f"<b>User ID:</b> <code>{user.id}</code>\n"
+            f"<b>Type:</b> {'Video 📹' if video else 'Audio 🎧'}\n"
+            f"<b>Song Title:</b> {title}\n"
+            f"<b>Duration:</b> {duration}\n"
+            f"<b>Song URL:</b> {link}\n"
+            f"<b>Command Message:</b> {m.link if m.link else 'N/A'}\n"
+            f"</blockquote>"
         )
-        await app.send_message(chat_id=app.logger, text=_text)
+        try:
+            await app.send_message(chat_id=app.logger, text=_text)
+        except Exception as e:
+            logger.warning("Failed to send play_log to logger group: %s", e)
+
+    async def error_log(
+        self,
+        context: str,
+        error: str,
+        chat_id: "int | None" = None,
+        chat_title: "str | None" = None,
+        title: "str | None" = None,
+        video: bool = False,
+    ) -> None:
+        """Forward a playback/download failure to the configured log group."""
+        if not app.logger:
+            return
+        ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+        scope = (
+            f"<b>Group:</b> <code>{chat_id}</code> | {chat_title}\n"
+            if chat_id is not None else ""
+        )
+        song = f"<b>Song:</b> {title}\n" if title else ""
+        song_type = "Video 📹" if video else "Audio 🎧"
+        _text = (
+            f"<b>⚠️ {app.name} — Error Log</b>\n"
+            f"<blockquote expandable>"
+            f"<b>When:</b> {ts}\n"
+            f"{scope}"
+            f"<b>Type:</b> {song_type}\n"
+            f"{song}"
+            f"<b>Stage:</b> {context}\n"
+            f"<b>Error:</b>\n<code>{error}</code>\n"
+            f"</blockquote>"
+        )
+        try:
+            await app.send_message(chat_id=app.logger, text=_text)
+        except Exception as e:
+            logger.warning("Failed to send error_log to logger group: %s", e)
 
     async def send_log(self, m: types.Message, chat: bool = False) -> None:
+        if not app.logger:
+            return
         if chat:
             user = m.from_user
             return await app.send_message(
