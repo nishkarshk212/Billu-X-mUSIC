@@ -47,6 +47,7 @@ class MongoDB:
 
         self.users = []
         self.usersdb = self.db.users
+        self.song_cachedb = self.db.song_cache
 
     async def connect(self) -> None:
         """Check if we can connect to the database.
@@ -155,6 +156,22 @@ class MongoDB:
             self.assistant[chat_id] = num
 
         return {1: userbot.one, 2: userbot.two, 3: userbot.three}.get(num)
+
+    # TELEGRAM STORAGE CHANNEL FILE_ID CACHE
+    async def get_song_file_id(self, video_id: str, is_video: bool = False) -> str | None:
+        """Get Telegram file_id for a cached song from MongoDB."""
+        key = f"{video_id}_v" if is_video else f"{video_id}_a"
+        doc = await self.song_cachedb.find_one({"_id": key})
+        return doc.get("file_id") if doc else None
+
+    async def save_song_file_id(self, video_id: str, file_id: str, is_video: bool = False) -> None:
+        """Cache Telegram file_id for a song in MongoDB."""
+        key = f"{video_id}_v" if is_video else f"{video_id}_a"
+        await self.song_cachedb.update_one(
+            {"_id": key},
+            {"$set": {"file_id": file_id, "video_id": video_id, "is_video": is_video}},
+            upsert=True,
+        )
 
     # BLACKLIST METHODS
     async def add_blacklist(self, chat_id: int) -> None:
