@@ -4,6 +4,7 @@
 
 
 import asyncio
+import re
 from pathlib import Path
 
 from ntgcalls import (ConnectionNotFound, TelegramServerError,
@@ -184,7 +185,7 @@ class TgCall(PyTgCalls):
                 await client.play(
                     chat_id=chat_id,
                     stream=stream,
-                    config=types.GroupCallConfig(auto_start=False),
+                    config=types.GroupCallConfig(auto_start=True),
                 )
                 stream_success = True
 
@@ -238,12 +239,13 @@ class TgCall(PyTgCalls):
                 await client.play(
                     chat_id=chat_id,
                     stream=stream,
-                    config=types.GroupCallConfig(auto_start=False),
+                    config=types.GroupCallConfig(auto_start=True),
                 )
 
             if not seek_time:
                 media.time = 1
                 await db.add_call(chat_id)
+                _remember(chat_id, getattr(media, "id", None), getattr(media, "title", None))
 
                 # Shorten title to 50 characters max
                 short_title = media.title.split("|")[0].split("(")[0].strip()
