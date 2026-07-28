@@ -484,11 +484,14 @@ class MongoDB:
             logger.warning("get_assistant_pm_config failed: %s", e)
             return {}
 
-    async def set_assistant_pm_text(self, text: str) -> None:
+    async def set_assistant_pm_text(self, text: str, entities: list | None = None) -> None:
         try:
+            update = {"text": text, "updated_at": time()}
+            if entities is not None:
+                update["text_entities"] = entities
             await self.storage_db.assistant_pm_config.update_one(
                 {"_id": "default"},
-                {"$set": {"text": text, "updated_at": time()}},
+                {"$set": update},
                 upsert=True,
             )
         except Exception as e:
@@ -503,6 +506,56 @@ class MongoDB:
             )
         except Exception as e:
             logger.warning("set_assistant_pm_buttons failed: %s", e)
+
+    async def set_assistant_pm_media(self, media: dict | None) -> None:
+        try:
+            if media is None:
+                await self.storage_db.assistant_pm_config.update_one(
+                    {"_id": "default"},
+                    {"$unset": {"media": ""}, "$set": {"updated_at": time()}},
+                    upsert=True,
+                )
+            else:
+                await self.storage_db.assistant_pm_config.update_one(
+                    {"_id": "default"},
+                    {"$set": {"media": media, "updated_at": time()}},
+                    upsert=True,
+                )
+        except Exception as e:
+            logger.warning("set_assistant_pm_media failed: %s", e)
+
+    async def set_assistant_pm_delay(self, delay: float | None) -> None:
+        try:
+            if delay is None:
+                await self.storage_db.assistant_pm_config.update_one(
+                    {"_id": "default"},
+                    {"$unset": {"delay": ""}, "$set": {"updated_at": time()}},
+                    upsert=True,
+                )
+            else:
+                await self.storage_db.assistant_pm_config.update_one(
+                    {"_id": "default"},
+                    {"$set": {"delay": float(delay), "updated_at": time()}},
+                    upsert=True,
+                )
+        except Exception as e:
+            logger.warning("set_assistant_pm_delay failed: %s", e)
+
+    async def set_assistant_pm_disabled(self, disabled: bool) -> None:
+        try:
+            await self.storage_db.assistant_pm_config.update_one(
+                {"_id": "default"},
+                {"$set": {"disabled": bool(disabled), "updated_at": time()}},
+                upsert=True,
+            )
+        except Exception as e:
+            logger.warning("set_assistant_pm_disabled failed: %s", e)
+
+    async def reset_assistant_pm_config(self) -> None:
+        try:
+            await self.storage_db.assistant_pm_config.delete_one({"_id": "default"})
+        except Exception as e:
+            logger.warning("reset_assistant_pm_config failed: %s", e)
 
     async def load_cache(self) -> None:
         doc = await self.cache.find_one({"_id": "migrated"})
