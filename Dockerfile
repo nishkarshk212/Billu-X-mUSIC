@@ -31,10 +31,10 @@ RUN deno --version
 
 # Install uv (fast Python package manager)
 RUN curl -Ls https://astral.sh/uv/install.sh | sh
-ENV PATH="/root/.local/bin:${PATH}"
+ENV PATH="/root/.local/bin:/app/.venv/bin:${PATH}"
 
 # Copy dependency spec and install Python deps first (layer caching)
-COPY pyproject.toml ./
+COPY pyproject.toml uv.lock ./
 RUN uv sync --no-dev
 
 # Copy the rest of the project
