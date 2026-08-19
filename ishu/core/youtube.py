@@ -482,11 +482,11 @@ def _extract_video_id(link: str) -> str | None:
 # ── Downloader: Railway YT API + Direct yt-dlp Fallback ───────────────────
 async def _railway_download(video_id: str, media_type: str) -> str | None:
     """
-    Download via Railway/Heroku self-hosted YouTube API proxy.
-    Strategy: Call /play/audio (or /play/video) to stream the file through the API proxy.
-    NOTE: Direct CDN download from googlevideo.com is NOT used here because Heroku dynos
-    cannot reach Google's CDN IPs directly (connection refused / SSL errors).
-    The API proxy handles the download on its end and streams bytes back.
+    Download via Railway/Heroku self-hosted YouTube API.
+    Strategy:
+      1. Call /audio?id= or /video?id= to extract a direct CDN URL (fast, no proxy timeout).
+      2. Download the file directly from Google CDN with 8 parallel chunks.
+    This avoids Heroku's 30s hard router timeout (H12) on /play/audio proxy streams.
     Returns local file path on success, None on failure.
     """
     if not RAILWAY_YT_API_URL or not RAILWAY_YT_API_KEY:
@@ -547,64 +547,7 @@ async def _railway_download(video_id: str, media_type: str) -> str | None:
                 os.remove(file_path)
         except OSError:
             pass
-
-    return None
-
-
-async def _direct_ytdlp_download(video_id: str, media_type: str) -> str | None:
-    """Fast direct yt-dlp fallback with multi-threaded fragment downloads (-N 4)."""
-    ext = "mp4" if media_type == "video" else "mp3"
-    file_path = os.path.join(DOWNLOAD_DIR, f"{video_id}.{ext}")
-    os.makedirs(DOWNLOAD_DIR, exist_ok=True)
-    link = f"https://www.youtube.com/watch?v={video_id}"
-
-    cmd = [
-        "yt-dlp",
-        "--js-runtimes", "node",
-        "-N", "8",
-        "--buffer-size", "1M",
-        "--http-chunk-size", "10M",
-        "--no-playlist",
-        "--no-warnings",
-        "-q",
-    ]
-    # YouTube bot-checks the default `web` client hardest; the mobile/TV clients
-    # (tv, ios, android, web_safari, mweb) routinely bypass the "Sign in to
-    # confirm you're not a bot" check with no cookies or proxy needed. Tune the
-    # list via the YT_PLAYER_CLIENTS env var (comma-separated).
-    _clients = [
-        c.strip()
-        for c in os.environ.get("YT_PLAYER_CLIENTS", _DEFAULT_PLAYER_CLIENTS).split(",")
-        if c.strip()
-    ]
-    if _clients:
-        cmd += ["--extractor-args", f"youtube:player_client={','.join(_clients)}"]
-    cookie = cookie_txt_file()
-    if cookie:
-        cmd.extend(["--cookies", cookie])
-
-    if media_type == "video":
-        cmd.extend(["-f", "bestvideo[height<=720]+bestaudio/best[height<=720]/best", "--merge-output-format", "mp4"])
-    else:
-        cmd.extend(["-x", "--audio-format", "mp3", "--audio-quality", "0"])
-
-    cmd.extend(["-o", file_path, link])
-
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        _, stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
-        resolved = _resolve_downloaded_file(video_id, ext)
-        if resolved:
-            _evict_disk_cache()
-            return resolved
-        logger.warning("Direct yt-dlp download returned no file for %s: %s", video_id, stderr.decode())
-    except Exception as e:
-        logger.warning("Direct yt-dlp download failed for %s: %s", video_id, e)
-    return None
+        return None
 
 
 # ── Main download entrypoint ──────────────────────────────────────────────────
@@ -613,7 +556,7 @@ async def _download_with_fallback(
     media_type: str,
 ) -> tuple[str | None, str]:
     """
-    Download using API Racing (parallel multi-server) -> Railway YT API -> direct yt-dlp fallback.
+    Download exclusively using Railway YT API (API Racing + direct server download).
     Returns (file_path, downloader_name)
     """
     video_id = _extract_video_id(link) or link
@@ -643,20 +586,12 @@ async def _download_with_fallback(
         except Exception as e:
             logger.warning("[race] Download from raced URL failed for %s: %s", video_id, e)
 
-    # Step 1: Single Railway API download (server-side download, no stream proxy)
+    # Step 1: Railway API download (server-side download, pure API)
     result = await _railway_download(video_id, media_type)
     if result:
         return result, "railway"
 
-    logger.warning(
-        "Railway YT API download failed for %s. Trying yt-dlp fallback.",
-        video_id,
-    )
-    result = await _direct_ytdlp_download(video_id, media_type)
-    if result:
-        return result, "yt-dlp"
-
-    logger.error("Download failed for: %s", video_id)
+    logger.error("Download failed for: %s via Railway YT API", video_id)
     await _notify_download_failure(video_id, media_type)
     return None, "none"
 
