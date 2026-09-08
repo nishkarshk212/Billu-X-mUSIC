@@ -1,42 +1,44 @@
-import os
 import asyncio
+import os
+import glob
+import re
 from pyrogram import Client
-from dotenv import load_dotenv
 
-load_dotenv()
+DEFAULT_API_ID = 30201492
+DEFAULT_API_HASH = "6bf0844e2bd6dc434fa19c641deeaf84"
+
+
+def cleanup_stale_files():
+    """Remove any old session sqlite files to guarantee a fresh login."""
+    for f in glob.glob("*.session*") + [":memory:.session", "generated_session.txt"]:
+        try:
+            if os.path.exists(f):
+                os.remove(f)
+        except OSError:
+            pass
+
 
 async def generate():
+    cleanup_stale_files()
+
     print()
     print("╔══════════════════════════════════════════════════╗")
     print("║   Pyrogram Session String Generator              ║")
-    print("║   Get API credentials: https://my.telegram.org   ║")
+    print("║   Billu Music Bot Session Generator              ║")
     print("╚══════════════════════════════════════════════════╝")
     print()
 
-    api_id_env = os.getenv("API_ID")
-    api_hash_env = os.getenv("API_HASH")
+    inp_id = input(f"  API_ID   [{DEFAULT_API_ID}]: ").strip()
+    api_id = int(inp_id) if inp_id else DEFAULT_API_ID
 
-    if api_id_env and api_hash_env:
-        api_id = int(api_id_env)
-        api_hash = api_hash_env
-        print(f"  Auto-loaded credentials from .env:")
-        print(f"  API_ID   : {api_id}")
-        print(f"  API_HASH : {api_hash}")
-    else:
-        api_id   = int(input("  API_ID   : ").strip())
-        api_hash = input("  API_HASH : ").strip()
-
+    inp_hash = input(f"  API_HASH [{DEFAULT_API_HASH}]: ").strip()
+    api_hash = inp_hash if inp_hash else DEFAULT_API_HASH
 
     print()
-    print("  Starting Telegram client — you will receive an OTP...")
+    print("  Starting Telegram client — enter your phone number with country code...")
     print()
 
-    # Prevent Pyrogram from auto-loading dead session string from env
-    for key in ["SESSION", "SESSION1", "SESSION2", "SESSION3"]:
-        if key in os.environ:
-            del os.environ[key]
-
-    async with Client(name="session_generator", in_memory=True, api_id=api_id, api_hash=api_hash) as app:
+    async with Client(name="billu_session", api_id=api_id, api_hash=api_hash, in_memory=True) as app:
         session = await app.export_session_string()
 
         print()
@@ -49,11 +51,28 @@ async def generate():
         print("  ↑ Copy the string above and paste it as SESSION= in your .env")
         print()
 
-        # Also save to a file for convenience
+        # Update .env file automatically if present
+        if os.path.exists(".env"):
+            with open(".env", "r") as f:
+                env_content = f.read()
+            if re.search(r"^SESSION=.*$", env_content, flags=re.MULTILINE):
+                env_content = re.sub(r"^SESSION=.*$", f"SESSION={session}", env_content, flags=re.MULTILINE)
+            else:
+                env_content += f"\nSESSION={session}\n"
+            with open(".env", "w") as f:
+                f.write(env_content)
+            print("  ✅ Automatically saved SESSION into .env")
+
         with open("generated_session.txt", "w") as f:
             f.write(f"SESSION={session}\n")
         print("  📄 Also saved to: generated_session.txt")
         print()
 
+    cleanup_stale_files()
+    # Re-save generated_session.txt
+    with open("generated_session.txt", "w") as f:
+        f.write(f"SESSION={session}\n")
 
-asyncio.run(generate())
+
+if __name__ == "__main__":
+    asyncio.run(generate())
