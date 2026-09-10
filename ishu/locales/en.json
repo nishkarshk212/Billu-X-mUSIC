@@ -98,7 +98,7 @@
     "queue_fetching": "Fetching queue...",
     "restarting": "Restarting...",
     "restarted": "Restart in progress. Don't worry, it'll only take a few seconds… maybe.",
-    "start_pm": "<emoji id=5454390891466726015>👋</emoji> Hey {0},\nThis is {1} !\n\n<emoji id=5947042989145590769>🎧</emoji> A music player bot with some awesome and useful features.\n\n<b><i><emoji id=5960842268096073715>ℹ️</emoji> Click on the help button for more info.</i></b>",
+    "start_pm": "<b>★ 𝐇єʏ {0}\n\n⋟ 𝐈 ᴧϻ {1} ᴧ ϻᴜsɪᴄ ʙσт 𝟺 ɢʀσᴜᴘ/ᴄʜᴧηηєʟ 🚀\n\n✦ 𝐊єʏ 𝐅єᴧтᴜʀєs :-\n\n▸ 𝐏ʟᴧʏ sσηɢ ɪη ᴠσɪᴄє ᴄʜᴧт.\n▸ 𝐈 ᴄᴧη єᴧsɪʟʏ ʜᴧηᴅʟє ɢʀσᴜᴘs.\n▸ 𝐅ᴧsт sϻσσтʜ ʜᴅ ǫᴜᴧʟɪтʏ ησ ᴧᴅs.\n▸ 𝐌σʀє ᴅєтᴧɪʟs → тᴧᴘ ʜєʟᴘ ʙᴜттση.\n\n────────────────────────</b>",
     "start_gp": "<emoji id=5454390891466726015>👋</emoji>{0} is alive.\n\n<u><b>Just a music player bot :)</b></u>",
     "start_settings": "<u><b>{0} settings</b></u>\n\nClick the buttons below to change this chat's current settings.",
     "stats_fetching": "Fetching stats...",

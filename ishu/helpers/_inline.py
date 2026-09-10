@@ -15,6 +15,23 @@ from ishu.core.lang import lang_codes
 _panel_state: dict[int, dict] = {}
 
 
+FONT_MAP = {
+    "a": "ᴧ", "b": "ʙ", "c": "ᴄ", "d": "ᴅ", "e": "є", "f": "ғ", "g": "ɢ", "h": "ʜ",
+    "i": "ɪ", "j": "ᴊ", "k": "ᴋ", "l": "ʟ", "m": "ϻ", "n": "η", "o": "σ", "p": "ᴘ",
+    "q": "ǫ", "r": "ʀ", "s": "s", "t": "т", "u": "ᴜ", "v": "ᴠ", "w": "ᴡ", "x": "х",
+    "y": "ʏ", "z": "ᴢ",
+    "A": "𝐀", "B": "𝐁", "C": "𝐂", "D": "𝐃", "E": "𝐄", "F": "𝐅", "G": "𝐆", "H": "𝐇",
+    "I": "𝐈", "J": "𝐉", "K": "𝐊", "L": "𝐋", "M": "𝐌", "N": "𝐍", "O": "𝐎", "P": "𝐏",
+    "Q": "𝐐", "R": "𝐑", "S": "𝐒", "T": "𝐓", "U": "𝐔", "V": "𝐕", "W": "𝐖", "X": "𝐗",
+    "Y": "𝐘", "Z": "𝐙",
+    "0": "𝟶", "1": "𝟷", "2": "𝟸", "3": "𝟹", "4": "𝟺", "5": "𝟻", "6": "𝟼", "7": "𝟽",
+    "8": "𝟾", "9": "𝟿",
+}
+
+
+def to_fancy(text: str) -> str:
+    return "".join(FONT_MAP.get(c, c) for c in text)
+
 class Inline:
     def __init__(self):
         self.ikm = types.InlineKeyboardMarkup
@@ -313,7 +330,7 @@ class Inline:
                 ],
                 [
                     self.ikb(
-                        text=lang["language"] + " ➜", callback_data="settings",
+                        text=to_fancy("Language") + " ➜", callback_data="settings",
                     ),
                     self.ikb(text=lang_codes[language], callback_data="language"),
                 ],
@@ -327,7 +344,7 @@ class Inline:
         rows = [
             [
                 self.ikb(
-                    text=f"{lang['add_me']} ✦",
+                    text=to_fancy("Add Me To Your Group"),
                     url=f"https://t.me/{b_un}?startgroup=true",
                     style=enums.ButtonStyle.SUCCESS,
                     icon_custom_emoji_id="5469798743043764619",
@@ -336,14 +353,14 @@ class Inline:
         ]
         if private:
             rows += [
-                [self.ikb(text=lang["help"], callback_data="help", style=enums.ButtonStyle.SUCCESS, icon_custom_emoji_id="5471921006643800598")],
+                [self.ikb(text=to_fancy("Help & Commands"), callback_data="help", style=enums.ButtonStyle.SUCCESS, icon_custom_emoji_id="5471921006643800598")],
                 [
-                    self.ikb(text=lang["support"], url=config.SUPPORT_CHAT, style=enums.ButtonStyle.SUCCESS, icon_custom_emoji_id="5422782960120134635"),
-                    self.ikb(text=lang["channel"], url=config.SUPPORT_CHANNEL, style=enums.ButtonStyle.SUCCESS, icon_custom_emoji_id="5422357698228290320"),
+                    self.ikb(text=to_fancy("Support"), url=config.SUPPORT_CHAT, style=enums.ButtonStyle.SUCCESS, icon_custom_emoji_id="5422782960120134635"),
+                    self.ikb(text=to_fancy("Channel"), url=config.SUPPORT_CHANNEL, style=enums.ButtonStyle.SUCCESS, icon_custom_emoji_id="5422357698228290320"),
                 ]
             ]
         else:
-            rows += [[self.ikb(text=lang["language"], callback_data="language", style=enums.ButtonStyle.PRIMARY, icon_custom_emoji_id="5422826721541914133")]]
+            rows += [[self.ikb(text=to_fancy("Language"), callback_data="language", style=enums.ButtonStyle.PRIMARY, icon_custom_emoji_id="5422826721541914133")]]
         return self.ikm(rows)
 
     def yt_key(self, link: str) -> types.InlineKeyboardMarkup:
