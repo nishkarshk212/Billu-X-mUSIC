@@ -231,30 +231,56 @@ async def _innertube_search(query: str, limit: int = 10) -> list:
         return []
 
 
+def _get_single_api_endpoint() -> tuple[str | None, str | None]:
+    """Return the single configured API URL and Key for this bot."""
+    for url_var, key_var in [
+        ("RAILWAY_YT_API_URL", "RAILWAY_YT_API_KEY"),
+        ("LILY_API_URL",       "LILY_API_KEY"),
+        ("YOUTUBE_API_URL",    "YOUTUBE_API_KEY"),
+        ("YT_API_URL",         "YT_API_KEY"),
+        ("PANDA_API_URL",      "PANDA_API_KEY"),
+    ]:
+        url = getattr(config, url_var, None) or os.environ.get(url_var)
+        key = getattr(config, key_var, None) or os.environ.get(key_var)
+        if url and key:
+            return url.rstrip("/"), str(key)
+    return None, None
+
+def _get_single_api_endpoint() -> tuple[str | None, str | None]:
+    """Return the single configured API URL and Key for this bot."""
+    for url_var, key_var in [
+        ("RAILWAY_YT_API_URL", "RAILWAY_YT_API_KEY"),
+        ("LILY_API_URL",       "LILY_API_KEY"),
+        ("YOUTUBE_API_URL",    "YOUTUBE_API_KEY"),
+        ("YT_API_URL",         "YT_API_KEY"),
+        ("PANDA_API_URL",      "PANDA_API_KEY"),
+    ]:
+        url = getattr(config, url_var, None) or os.environ.get(url_var)
+        key = getattr(config, key_var, None) or os.environ.get(key_var)
+        if url and key:
+            return url.rstrip("/"), str(key)
+    return None, None
+
 async def _race_api_stream(video_id: str, media_type: str = "audio") -> str | None:
     """
-    Get direct stream URL from Lily API.
-    Prefers /audio (JSON CDN URL, no Heroku proxy) over /play/audio (streaming proxy).
-    Returns a direct HTTP stream URL (not a local file path).
+    Direct single-API stream resolver (No fallback APIs, No Chunks API).
+    Returns direct CDN URL or API proxy stream URL.
     """
-    # Check prefetch cache first — instant hit!
     if video_id in _PREFETCH_CACHE and _PREFETCH_CACHE[video_id]:
-        logger.info("[prefetch] ⚡ Instant cache hit for %s", video_id)
         return _PREFETCH_CACHE[video_id]
 
-    if not LILY_API_URL or not LILY_API_KEY:
+    base_url, api_key = _get_single_api_endpoint()
+    if not base_url or not api_key:
         return None
-
-    base_url = LILY_API_URL.rstrip("/")
-    api_key = LILY_API_KEY
 
     json_ep = "video" if media_type == "video" else "audio"
     proxy_ep = "play/video/hq" if media_type == "video" else "play/audio"
-
     session = _get_http_session()
-    hdrs = {"X-API-Key": api_key}
+    hdrs = {
+        "X-API-Key": api_key,
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+    }
 
-    # ── Fast path: /audio?id= → JSON with direct googlevideo CDN URL ─────
     try:
         async with session.get(
             f"{base_url}/{json_ep}?id={video_id}",
@@ -264,29 +290,18 @@ async def _race_api_stream(video_id: str, media_type: str = "audio") -> str | No
             if r.status == 200:
                 data = await r.json(content_type=None)
                 media_data = data.get(json_ep) or data.get("stream") or data.get("video") or {}
-                cdn = media_data.get("url") or media_data.get("direct_url")
+                cdn = (
+                    media_data.get("url")
+                    or media_data.get("direct_url")
+                    or (media_data.get("best_audio") or {}).get("url")
+                    or (media_data.get("best_video") or {}).get("url")
+                )
                 if cdn:
-                    logger.info("[lily] ✓ %s won for %s (CDN URL)", base_url, video_id)
                     return cdn
     except Exception:
         pass
 
-    # ── Fallback: /play/audio proxy stream ────────────────────────────────
-    try:
-        async with session.get(
-            f"{base_url}/{proxy_ep}?id={video_id}",
-            headers=hdrs,
-            timeout=aiohttp.ClientTimeout(connect=4, total=25),
-            allow_redirects=True,
-        ) as resp:
-            if resp.status == 200:
-                logger.info("[lily] ✓ %s won for %s (proxy URL)", base_url, video_id)
-                return str(resp.url)
-    except Exception:
-        pass
-
-    return None
-
+    return f"{base_url}/{proxy_ep}?id={video_id}&api_key={api_key}"
 
 def prefetch_next(video_id: str, media_type: str = "audio") -> None:
     """
@@ -654,113 +669,15 @@ async def _direct_ytdlp_download(video_id: str, media_type: str) -> str | None:
 
 
 # ── Parallel Byte-Range Chunk Downloader ──────────────────────────────────────
-async def _parallel_chunk_download(
-    cdn_url: str,
-    file_path: str,
-    media_type: str = "audio",
-    n_chunks: int = 0,
-    known_length: int = 0,
-) -> bool:
-    """
-    Download a file from a direct CDN URL using N parallel byte-range requests.
-    Saturates bandwidth from Google CDN — much faster than a single sequential stream.
-    Falls back gracefully if range requests fail.
-    """
-    if n_chunks == 0:
-        n_chunks = 32 if media_type == "video" else 16
-
-    session = _get_http_session()
-
-    # ── 1. Discover Content-Length & Range support ────────────────────────────
-    content_length = known_length
-    range_ok = content_length > 0
-    if content_length <= 0:
-        try:
-            async with session.head(
-                cdn_url,
-                timeout=aiohttp.ClientTimeout(total=6),
-                allow_redirects=True,
-            ) as r:
-                content_length = int(r.headers.get("Content-Length", 0))
-                range_ok = r.headers.get("Accept-Ranges", "").lower() == "bytes" and content_length > 0
-        except Exception:
-            pass
-
-    # If no range support or file is too small, let caller do single sequential stream
-    if not range_ok or content_length < 1 * 1024 * 1024:
-        return False
-
-    # ── 2. Split into N chunks and download all in parallel ────────────────────
-    actual_n = min(n_chunks, max(1, content_length // (512 * 1024)))
-    chunk_size = content_length // actual_n
-    ranges = [
-        (i, i * chunk_size, (i + 1) * chunk_size - 1 if i < actual_n - 1 else content_length - 1)
-        for i in range(actual_n)
-    ]
-    buffers: list[bytes | None] = [None] * actual_n
-
-    async def _fetch_chunk(idx: int, start: int, end: int) -> bool:
-        for attempt in range(3):
-            try:
-                async with session.get(
-                    cdn_url,
-                    headers={"Range": f"bytes={start}-{end}"},
-                    timeout=aiohttp.ClientTimeout(connect=5, total=60),
-                    allow_redirects=True,
-                ) as r:
-                    if r.status in (200, 206):
-                        data = await r.read()
-                        if data:
-                            buffers[idx] = data
-                            return True
-            except Exception as e:
-                if attempt == 2:
-                    logger.warning("[chunk_dl] chunk %d failed (3 attempts): %s", idx, e)
-        return False
-
-    results = await asyncio.gather(*[_fetch_chunk(i, s, e) for i, s, e in ranges])
-
-    if not all(results) or any(b is None for b in buffers):
-        logger.warning("[chunk_dl] %d/%d chunks failed — will try sequential stream fallback",
-                       sum(1 for r in results if not r), actual_n)
-        return False
-
-    # ── 3. Assemble chunks in order ────────────────────────────────────────────
-    try:
-        with open(file_path, "wb") as fobj:
-            for buf in buffers:
-                if buf:
-                    fobj.write(buf)
-
-        size = os.path.getsize(file_path) if os.path.exists(file_path) else 0
-        if size > 0:
-            logger.info(
-                "[chunk_dl] ✓ %s  %.1f MB via %d parallel chunks",
-                os.path.basename(file_path), size / (1024 * 1024), actual_n,
-            )
-            return True
-    except Exception as assemble_err:
-        logger.warning("[chunk_dl] failed to assemble chunks: %s", assemble_err)
-
-    return False
-
-
-# ── Main download entrypoint ──────────────────────────────────────────────────
+# ── Main download entrypoint (Strictly Single API + direct yt-dlp fallback) ───
+# ── Main download entrypoint (Strictly Single API + direct yt-dlp fallback) ───
 async def _download_with_fallback(
     link: str,
     media_type: str,
 ) -> tuple[str | None, str]:
     """
-    Download using Lily API → direct yt-dlp fallback.
-
-    Fast path:
-      1. Query Lily API via /audio?id= (JSON) → direct CDN URL.
-      2. Download from that CDN URL using N parallel byte-range chunks.
-      3. If parallel chunks fail, stream directly from that CDN URL.
-      4. If CDN URL fails, sequential stream via /play/audio proxy from Lily API.
-    Final fallback:
-      5. Direct yt-dlp download with mobile/TV client & IPv4 bypass.
-
+    Strictly single API per bot.
+    No Chunks API. No Fallback APIs.
     Returns (file_path, downloader_name)
     """
     video_id = _extract_video_id(link) or link
@@ -771,100 +688,11 @@ async def _download_with_fallback(
     if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
         return file_path, "cache"
 
-    if LILY_API_URL and LILY_API_KEY:
-        base_url = LILY_API_URL.rstrip("/")
-        api_key = LILY_API_KEY
+    base_url, api_key = _get_single_api_endpoint()
+    if base_url and api_key:
+        endpoint = "play/video/hq" if media_type == "video" else "play/audio"
         session = _get_http_session()
-        json_ep = "video" if media_type == "video" else "audio"
-        proxy_eps = ["play/video/hq", "play/video"] if media_type == "video" else ["play/audio"]
-
-        # ── Step 1: Query Lily API for direct CDN URL ─────────────────────────
-        cdn_url: str | None = None
-        cdn_size: int = 0
-        hdrs = {
-            "X-API-Key": api_key,
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-        }
-        try:
-            async with session.get(
-                f"{base_url}/{json_ep}?id={video_id}",
-                headers=hdrs,
-                timeout=aiohttp.ClientTimeout(connect=5, total=25),
-            ) as r:
-                if r.status == 200:
-                    data = await r.json(content_type=None)
-                    media_data = (
-                        data.get(json_ep)
-                        or data.get("stream")
-                        or data.get("video")
-                        or {}
-                    )
-                    cdn = (
-                        media_data.get("url")
-                        or media_data.get("direct_url")
-                        or (media_data.get("best_audio") or {}).get("url")
-                        or (media_data.get("best_video") or {}).get("url")
-                        or ((media_data.get("audio_streams") or [{}])[0]).get("url")
-                        or ((media_data.get("video_streams") or [{}])[0]).get("url")
-                    )
-                    fsize = int(
-                        media_data.get("filesize")
-                        or (media_data.get("best_audio") or {}).get("filesize")
-                        or (media_data.get("best_video") or {}).get("filesize")
-                        or 0
-                    )
-                    if cdn:
-                        logger.info("[lily] ✓ %s → CDN URL (/%s, size=%d)", base_url, json_ep, fsize)
-                        cdn_url, cdn_size = cdn, fsize
-        except Exception:
-            pass
-
-        if not cdn_url:
-            # Fallback: /play/audio proxy → capture final URL if redirect
-            for ep in proxy_eps:
-                try:
-                    async with session.get(
-                        f"{base_url}/{ep}?id={video_id}",
-                        headers=hdrs,
-                        timeout=aiohttp.ClientTimeout(connect=5, total=30),
-                        allow_redirects=True,
-                    ) as r:
-                        if r.status == 200 and "googlevideo.com" in str(r.url):
-                            logger.info("[lily] ✓ %s → proxy redirect URL (/%s)", base_url, ep)
-                            cdn_url, cdn_size = str(r.url), 0
-                            break
-                except Exception:
-                    pass
-
-        # ── Step 2: Download from direct CDN URL ──────────────────────────────
-        if cdn_url:
-            # 2a: Try 16-chunk parallel download
-            ok = await _parallel_chunk_download(cdn_url, file_path, media_type, known_length=cdn_size)
-            # 2b: If chunks failed, download sequentially from direct CDN URL
-            if not ok:
-                try:
-                    async with session.get(
-                        cdn_url,
-                        timeout=aiohttp.ClientTimeout(total=180),
-                        allow_redirects=True,
-                    ) as r:
-                        if r.status == 200:
-                            with open(file_path, "wb") as fobj:
-                                async for chunk in r.content.iter_chunked(1024 * 1024):
-                                    fobj.write(chunk)
-                            if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
-                                ok = True
-                                logger.info("[cdn_stream] ✓ %s → %s via direct CDN stream", video_id, file_path)
-                except Exception as stream_err:
-                    logger.warning("[cdn_stream] direct stream failed for %s: %s", video_id, stream_err)
-
-            if ok and os.path.exists(file_path) and os.path.getsize(file_path) > 0:
-                _evict_disk_cache()
-                return file_path, "lily"
-
-        # ── Step 3: Sequential proxy stream fallback from Lily API ────────────
-        proxy_ep = proxy_eps[0]
-        media_url = f"{base_url}/{proxy_ep}?id={video_id}"
+        media_url = f"{base_url}/{endpoint}?id={video_id}"
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
             "X-API-Key": str(api_key),
@@ -873,32 +701,30 @@ async def _download_with_fallback(
             async with session.get(
                 media_url,
                 headers=headers,
-                timeout=aiohttp.ClientTimeout(total=40),
+                timeout=aiohttp.ClientTimeout(connect=5, total=35),
                 allow_redirects=True,
             ) as resp:
                 if resp.status == 200:
                     with open(file_path, "wb") as f:
-                        async for chunk in resp.content.iter_chunked(2 * 1024 * 1024):
+                        async for chunk in resp.content.iter_chunked(512 * 1024):
                             f.write(chunk)
                     if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
                         _evict_disk_cache()
-                        logger.info("Lily API ✓ %s via %s (sequential)", video_id, base_url)
-                        return file_path, "lily"
+                        logger.info("Single API ✓ %s via %s", video_id, base_url)
+                        return file_path, "api"
                 else:
-                    logger.warning("Lily API status %s from %s for %s",
-                                   resp.status, base_url, video_id)
+                    logger.warning("Single API status %s from %s for %s", resp.status, base_url, video_id)
         except Exception as e:
-            logger.warning("Lily API download from %s failed for %s: %s",
-                           base_url, video_id, e)
+            logger.warning("Single API download from %s failed for %s: %s", base_url, video_id, e)
 
-    # ── Step 4: Direct yt-dlp fallback ────────────────────────────────────────
-    logger.warning("Lily API failed for %s. Attempting direct yt-dlp fallback...", video_id)
+    # Fallback: Direct yt-dlp download locally on dyno
+    logger.warning("Assigned API failed for %s. Attempting direct yt-dlp fallback...", video_id)
     direct_res = await _direct_ytdlp_download(video_id, media_type)
     if direct_res:
         logger.info("Direct yt-dlp fallback succeeded for %s: %s", video_id, direct_res)
         return direct_res, "yt-dlp"
 
-    logger.error("Download failed for: %s via all methods (Lily API + direct yt-dlp)", video_id)
+    logger.error("Download failed for %s via assigned API and direct yt-dlp", video_id)
     await _notify_download_failure(video_id, media_type)
     return None, "none"
 
